@@ -24,10 +24,10 @@ etl:
   # Common settings used across components
   common:
     kind: drivaerml  # must be either drivesim, drivaerml or ahmedml
-    model_type: surface  # produce data for which model? surface, volume, combined
+    model_type: combined  # produce data for which model? surface, volume, combined
 
   processing:
-    num_processes: 12
+    num_processes: 48
     args: {}
 
   validator:

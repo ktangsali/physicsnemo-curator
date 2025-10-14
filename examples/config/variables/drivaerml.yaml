@@ -16,10 +16,10 @@
 # limitations under the License.
 
 volume_variables:
-  UMeanTrim: vector
-  pMeanTrim: scalar
-  nutMeanTrim: scalar
+  UMean: vector
+  pMean: scalar
+  nutMean: scalar
 
 surface_variables:
-  pMeanTrim: scalar
-  wallShearStressMeanTrim: vector
+  pMean: scalar
+  wallShearStressMean: vector
