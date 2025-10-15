@@ -85,6 +85,7 @@ class ExternalAerodynamicsNumpyTransformation(DataTransformation):
             surface_fields=to_float32(data.surface_fields),
             volume_mesh_centers=to_float32(data.volume_mesh_centers),
             volume_fields=to_float32(data.volume_fields),
+            volume_sdf=to_float32(data.volume_sdf),
         )
 
 
@@ -167,8 +168,8 @@ class ExternalAerodynamicsSurfaceTransformation(DataTransformation):
                 for processor in self.surface_processors:
                     data = processor(data)
 
-            # Delete raw surface data to save memory
-            data.surface_polydata = None
+            # Note: Keep surface_polydata for SDF computation in volume processing
+            # data.surface_polydata = None
 
         return data
 
@@ -219,6 +220,8 @@ class ExternalAerodynamicsVolumeTransformation(DataTransformation):
 
             # Delete raw volume data to save memory
             data.volume_unstructured_grid = None
+            # Also delete surface_polydata now that SDF computation is done
+            data.surface_polydata = None
 
         return data
 
@@ -309,4 +312,5 @@ class ExternalAerodynamicsZarrTransformation(DataTransformation):
             surface_fields=self._prepare_array(data.surface_fields),
             volume_mesh_centers=self._prepare_array(data.volume_mesh_centers),
             volume_fields=self._prepare_array(data.volume_fields),
+            volume_sdf=self._prepare_array(data.volume_sdf),
         )

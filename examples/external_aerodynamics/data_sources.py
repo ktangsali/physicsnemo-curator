@@ -122,9 +122,30 @@ class ExternalAerodynamicsDataSource(DataSource):
 
             surface_polydata = pv.read(surface_path)
 
+        air_density = 1.0
+        stream_velocity = None
+        angle_of_attack = None
+        
+        if self.kind == DatasetKind.AIRFRANS:
+            name = dirname.removeprefix("run_")
+            parts = name.split("_")
+            if len(parts) >= 3:
+                try:
+                    stream_velocity = float(parts[2])
+                except ValueError:
+                    pass
+            if len(parts) >= 4:
+                try:
+                    angle_of_attack = float(parts[3])
+                except ValueError:
+                    pass
+
         metadata = ExternalAerodynamicsMetadata(
             filename=dirname,
-            dataset_type=self.model_type,  # surface, volume, combined
+            dataset_type=self.model_type,
+            air_density=air_density,
+            stream_velocity=stream_velocity,
+            angle_of_attack=angle_of_attack,
         )
 
         return ExternalAerodynamicsExtractedDataInMemory(
@@ -185,6 +206,7 @@ class ExternalAerodynamicsDataSource(DataSource):
             "filename": data.metadata.filename,
             "stream_velocity": data.metadata.stream_velocity,
             "air_density": data.metadata.air_density,
+            "angle_of_attack": data.metadata.angle_of_attack,
         }
 
         # Add optional arrays if present
@@ -195,6 +217,7 @@ class ExternalAerodynamicsDataSource(DataSource):
             "surface_fields",
             "volume_mesh_centers",
             "volume_fields",
+            "volume_sdf",
         ]:
             value = getattr(data, field)
             if value is not None:
@@ -238,6 +261,7 @@ class ExternalAerodynamicsDataSource(DataSource):
             "surface_fields",
             "volume_mesh_centers",
             "volume_fields",
+            "volume_sdf",
         ]:
             array_info = getattr(data, field)
             if array_info is not None:
@@ -247,6 +271,21 @@ class ExternalAerodynamicsDataSource(DataSource):
                     chunks=array_info.chunks,
                     compressor=array_info.compressor,
                 )
+        
+        # # Write scalar metadata as arrays for easy loading
+        # if data.metadata.air_density is not None:
+        #     root.create_dataset("air_density", data=np.array([data.metadata.air_density], dtype=np.float32))
+        # if data.metadata.stream_velocity is not None:
+        #     root.create_dataset("stream_velocity", data=np.array([data.metadata.stream_velocity], dtype=np.float32))
+
+        if data.metadata.air_density is not None:
+            root.create_dataset("air_density", data=np.float32(data.metadata.air_density))
+        
+        if data.metadata.stream_velocity is not None:
+            root.create_dataset("stream_velocity", data=np.float32(data.metadata.stream_velocity))
+        
+        if data.metadata.angle_of_attack is not None:
+            root.create_dataset("angle_of_attack", data=np.float32(data.metadata.angle_of_attack))
 
     def should_skip(self, filename: str) -> bool:
         """Checks whether the file should be skipped."""

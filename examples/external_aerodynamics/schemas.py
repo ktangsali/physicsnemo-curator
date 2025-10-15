@@ -40,6 +40,7 @@ class ExternalAerodynamicsMetadata:
     # Physical parameters
     stream_velocity: Optional[float] = None
     air_density: Optional[float] = None
+    angle_of_attack: Optional[float] = None
 
     # Geometry bounds
     x_bound: Optional[tuple[float, float]] = None  # xmin, xmax
@@ -86,6 +87,7 @@ class ExternalAerodynamicsExtractedDataInMemory:
     # Processed volume data
     volume_mesh_centers: Optional[np.ndarray] = None
     volume_fields: Optional[np.ndarray] = None
+    volume_sdf: Optional[np.ndarray] = None
 
 
 @dataclass(frozen=True)
@@ -127,6 +129,7 @@ class ExternalAerodynamicsZarrDataInMemory:
     # Volume data
     volume_mesh_centers: Optional[PreparedZarrArrayInfo] = None
     volume_fields: Optional[PreparedZarrArrayInfo] = None
+    volume_sdf: Optional[PreparedZarrArrayInfo] = None
 
 
 @dataclass(frozen=True)
@@ -168,3 +171,4 @@ class ExternalAerodynamicsNumpyDataInMemory:
     # Volume data
     volume_mesh_centers: Optional[np.ndarray] = None
     volume_fields: Optional[np.ndarray] = None
+    volume_sdf: Optional[np.ndarray] = None

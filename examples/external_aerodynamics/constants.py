@@ -44,6 +44,7 @@ class DatasetKind(str, Enum):
     DRIVESIM = "drivesim"
     DRIVAERML = "drivaerml"
     AHMEDML = "ahmedml"
+    AIRFRANS = "airfrans"
 
 
 @dataclass(frozen=True)

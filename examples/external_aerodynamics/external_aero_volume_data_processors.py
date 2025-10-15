@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import numpy as np
+import pyvista as pv
 
 from examples.external_aerodynamics.constants import PhysicsConstants
 from examples.external_aerodynamics.external_aero_utils import (
@@ -63,4 +64,35 @@ def update_volume_data_to_float32(
     """Update volume data to float32."""
     data.volume_mesh_centers = to_float32(data.volume_mesh_centers)
     data.volume_fields = to_float32(data.volume_fields)
+    return data
+
+
+def clip_volume_to_box(
+    data: ExternalAerodynamicsExtractedDataInMemory,
+    bounds: tuple[tuple[float, float], tuple[float, float], tuple[float, float]] = (
+        (-2, 4), (-1.5, 1.5), (0, 1)
+    ),
+) -> ExternalAerodynamicsExtractedDataInMemory:
+    """
+    Clip volume data to a bounding box.
+    
+    Args:
+        data: ExternalAerodynamicsExtractedDataInMemory with volume data
+        bounds: Tuple of (x_bounds, y_bounds, z_bounds) where each is (min, max)
+        
+    Returns:
+        Data with clipped volume grid
+    """
+    if data.volume_unstructured_grid is None:
+        return data
+    
+    volume = pv.wrap(data.volume_unstructured_grid)
+    
+    x_bounds, y_bounds, z_bounds = bounds
+    box_bounds = [x_bounds[0], x_bounds[1], y_bounds[0], y_bounds[1], z_bounds[0], z_bounds[1]]
+    
+    clipped = volume.clip_box(box_bounds, invert=False, crinkle=True)
+    
+    data.volume_unstructured_grid = clipped
+    
     return data
