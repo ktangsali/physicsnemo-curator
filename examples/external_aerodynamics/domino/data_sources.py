@@ -232,6 +232,16 @@ class DoMINODataSource(DataSource):
             "surface_fields",
             "volume_mesh_centers",
             "volume_fields",
+            # Connectivity fields
+            "volume_points",
+            "volume_cell_volumes",
+            "volume_cell_centers",
+            "volume_cell_point_ids_flat",
+            "volume_cell_point_ids_offsets",
+            "volume_neighbors_flat",
+            "volume_neighbors_offsets",
+            "volume_face_point_ids_flat",
+            "volume_face_offsets",
         ]:
             array_info = getattr(data, field)
             if array_info is not None:

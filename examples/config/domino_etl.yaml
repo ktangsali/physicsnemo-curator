@@ -27,7 +27,7 @@ etl:
     model_type: combined  # produce data for which model? surface, volume, combined
 
   processing:
-    num_processes: 48
+    num_processes: 12
     args: {}
 
   validator:
@@ -49,6 +49,7 @@ etl:
     # Preprocessing transformations.
     # These take in the raw geometry, volume and surface data, and apply DoMINO specific preprocessing transformations.
     # Variable names are piped in from the variables/drivaerml.yaml or variables/ahmedml.yaml file.
+    # Connectivity computation is now integrated into preprocessing (runs before volume grid is deleted).
     preprocessing:
       _target_: examples.external_aerodynamics.domino.data_transformations.DoMINOPreprocessingTransformation
       _convert_: all

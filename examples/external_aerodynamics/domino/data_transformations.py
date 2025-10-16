@@ -21,6 +21,7 @@ import numpy as np
 import pyvista as pv
 import vtk
 from numcodecs import Blosc
+from vtk.util import numpy_support
 
 from physicsnemo_curator.etl.data_transformations import DataTransformation
 from physicsnemo_curator.etl.processing_config import ProcessingConfig
@@ -34,6 +35,75 @@ from .schemas import (
     DoMINOZarrDataInMemory,
     PreparedZarrArrayInfo,
 )
+
+
+def extract_vtk_connectivity(mesh):
+    """Extract raw connectivity arrays directly from VTK."""
+    if hasattr(mesh, 'GetOutput'):
+        ugrid = mesh.GetOutput()
+    else:
+        ugrid = mesh
+    
+    cells = ugrid.GetCells()
+    cell_connectivity = numpy_support.vtk_to_numpy(cells.GetConnectivityArray())
+    cell_offsets = numpy_support.vtk_to_numpy(cells.GetOffsetsArray())
+    
+    return cell_connectivity, cell_offsets, ugrid.GetNumberOfCells()
+
+
+def build_face_connectivity_vtk(ugrid):
+    """Build face connectivity using pure VTK API.
+    
+    Returns:
+        neighbors: List of neighbor cell IDs for each cell
+        face_point_ids_map: Dict mapping (cell1_id, cell2_id) to face point IDs
+        cell_point_ids: List of point IDs for each cell
+    """
+    n_cells = ugrid.GetNumberOfCells()
+    
+    # Extract VTK connectivity
+    cell_connectivity, cell_offsets, _ = extract_vtk_connectivity(ugrid)
+    
+    # Build cell point IDs
+    cell_point_ids = []
+    for cell_idx in range(n_cells):
+        start = cell_offsets[cell_idx]
+        end = cell_offsets[cell_idx + 1]
+        cell_point_ids.append(list(cell_connectivity[start:end]))
+    
+    # Extract faces using VTK API - hash-based matching for O(1) neighbor lookup
+    face_to_cells = {}
+    
+    for cell_idx in range(n_cells):
+        cell = ugrid.GetCell(cell_idx)
+        n_faces = cell.GetNumberOfFaces()
+        
+        for face_idx in range(n_faces):
+            face = cell.GetFace(face_idx)
+            face_point_ids_vtk = face.GetPointIds()
+            n_face_pts = face_point_ids_vtk.GetNumberOfIds()
+            
+            # Extract face point IDs
+            face_pts = [face_point_ids_vtk.GetId(i) for i in range(n_face_pts)]
+            face_tuple = tuple(sorted(face_pts))
+            
+            if face_tuple not in face_to_cells:
+                face_to_cells[face_tuple] = []
+            face_to_cells[face_tuple].append((cell_idx, np.array(face_pts, dtype=np.int64)))
+    
+    # Build neighbors from face matches
+    neighbors = [[] for _ in range(n_cells)]
+    face_point_ids_map = {}
+    
+    for face_tuple, cell_list in face_to_cells.items():
+        if len(cell_list) == 2:  # Internal face shared by 2 cells
+            (cell1_id, face_pts1), (cell2_id, face_pts2) = cell_list
+            neighbors[cell1_id].append(cell2_id)
+            neighbors[cell2_id].append(cell1_id)
+            face_point_ids_map[(cell1_id, cell2_id)] = face_pts1
+            face_point_ids_map[(cell2_id, cell1_id)] = face_pts1
+    
+    return neighbors, face_point_ids_map, cell_point_ids
 
 
 class DoMINONumpyTransformation(DataTransformation):
@@ -156,6 +226,9 @@ class DoMINOPreprocessingTransformation(DataTransformation):
                 data.volume_unstructured_grid, length_scale
             )
 
+            # Compute connectivity BEFORE deleting the unstructured grid
+            data = self._compute_connectivity(data)
+
             # Delete raw volume data to save memory
             data.volume_unstructured_grid = None
 
@@ -186,6 +259,77 @@ class DoMINOPreprocessingTransformation(DataTransformation):
             data.metadata.decimation_algo = self.decimation_algo
             data.metadata.decimation_reduction = self.target_reduction
 
+        return data
+
+    def _compute_connectivity(
+        self, data: DoMINOExtractedDataInMemory
+    ) -> DoMINOExtractedDataInMemory:
+        """Compute connectivity from volume mesh."""
+        ugrid = data.volume_unstructured_grid
+        
+        # Extract points
+        points = numpy_support.vtk_to_numpy(ugrid.GetPoints().GetData()).astype(np.float64)
+        
+        # Compute cell volumes if not present
+        if not ugrid.GetCellData().HasArray("Volume"):
+            cell_size_filter = vtk.vtkCellSizeFilter()
+            cell_size_filter.SetInputData(ugrid)
+            cell_size_filter.SetComputeLength(False)
+            cell_size_filter.SetComputeArea(False)
+            cell_size_filter.SetComputeVolume(True)
+            cell_size_filter.SetComputeVertexCount(False)
+            cell_size_filter.Update()
+            ugrid = cell_size_filter.GetOutput()
+            data.volume_unstructured_grid = ugrid
+        
+        cell_volumes = numpy_support.vtk_to_numpy(
+            ugrid.GetCellData().GetArray("Volume")
+        ).astype(np.float64)
+        
+        # Compute cell centers
+        cell_centers_filter = vtk.vtkCellCenters()
+        cell_centers_filter.SetInputData(ugrid)
+        cell_centers_filter.Update()
+        cell_centers = numpy_support.vtk_to_numpy(
+            cell_centers_filter.GetOutput().GetPoints().GetData()
+        ).astype(np.float64)
+        
+        # Build face connectivity
+        neighbors, face_point_ids_map, cell_point_ids = build_face_connectivity_vtk(ugrid)
+        
+        # Flatten data structures
+        cell_point_ids_flat = []
+        cell_point_ids_offsets = [0]
+        for cell_pts in cell_point_ids:
+            cell_point_ids_flat.extend(cell_pts)
+            cell_point_ids_offsets.append(len(cell_point_ids_flat))
+        
+        neighbors_flat = []
+        neighbors_offsets = [0]
+        face_point_ids_flat = []
+        face_offsets = [0]
+        
+        for cell_id, cell_neighbors in enumerate(neighbors):
+            neighbors_flat.extend(cell_neighbors)
+            neighbors_offsets.append(len(neighbors_flat))
+            
+            for neighbor_id in cell_neighbors:
+                if (cell_id, neighbor_id) in face_point_ids_map:
+                    face_pts = face_point_ids_map[(cell_id, neighbor_id)]
+                    face_point_ids_flat.extend(face_pts)
+                face_offsets.append(len(face_point_ids_flat))
+        
+        # Store connectivity
+        data.volume_points = points.astype(np.float64)
+        data.volume_cell_volumes = cell_volumes.astype(np.float64)
+        data.volume_cell_centers = cell_centers.astype(np.float64)
+        data.volume_cell_point_ids_flat = np.array(cell_point_ids_flat, dtype=np.int64)
+        data.volume_cell_point_ids_offsets = np.array(cell_point_ids_offsets, dtype=np.int64)
+        data.volume_neighbors_flat = np.array(neighbors_flat, dtype=np.int64)
+        data.volume_neighbors_offsets = np.array(neighbors_offsets, dtype=np.int64)
+        data.volume_face_point_ids_flat = np.array(face_point_ids_flat, dtype=np.int64)
+        data.volume_face_offsets = np.array(face_offsets, dtype=np.int64)
+        
         return data
 
     def _process_volume_data(
@@ -246,6 +390,111 @@ class DoMINOPreprocessingTransformation(DataTransformation):
         return surface_coordinates, surface_normals, surface_sizes, surface_fields
 
 
+class DoMINOConnectivityTransformation(DataTransformation):
+    """Computes volume mesh connectivity for FVM residual computation.
+    
+    This transformation extracts connectivity information from the volume mesh,
+    including:
+    - Cell point IDs and offsets
+    - Cell neighbor connectivity
+    - Face point IDs and offsets
+    - Cell volumes and centers
+    
+    This connectivity data is required for computing physics-informed residuals
+    using Finite Volume Method (FVM).
+    """
+
+    def __init__(self, cfg: ProcessingConfig, compute_connectivity: bool = True):
+        super().__init__(cfg)
+        self.compute_connectivity = compute_connectivity
+
+    def transform(
+        self, data: DoMINOExtractedDataInMemory
+    ) -> DoMINOExtractedDataInMemory:
+        """Compute and store connectivity data from volume mesh.
+        
+        Args:
+            data: DoMINO extracted data containing volume_unstructured_grid
+        
+        Returns:
+            Data with connectivity fields populated
+        """
+        if not self.compute_connectivity:
+            return data
+
+        # Check if volume data exists
+        if data.volume_unstructured_grid is None:
+            return data
+
+        ugrid = data.volume_unstructured_grid
+        
+        # Extract points
+        points = numpy_support.vtk_to_numpy(ugrid.GetPoints().GetData()).astype(np.float64)
+        
+        # Compute cell volumes if not present
+        if not ugrid.GetCellData().HasArray("Volume"):
+            cell_size_filter = vtk.vtkCellSizeFilter()
+            cell_size_filter.SetInputData(ugrid)
+            cell_size_filter.SetComputeLength(False)
+            cell_size_filter.SetComputeArea(False)
+            cell_size_filter.SetComputeVolume(True)
+            cell_size_filter.SetComputeVertexCount(False)
+            cell_size_filter.Update()
+            ugrid = cell_size_filter.GetOutput()
+            # Update the reference in data
+            data.volume_unstructured_grid = ugrid
+        
+        cell_volumes = numpy_support.vtk_to_numpy(
+            ugrid.GetCellData().GetArray("Volume")
+        ).astype(np.float64)
+        
+        # Compute cell centers
+        cell_centers_filter = vtk.vtkCellCenters()
+        cell_centers_filter.SetInputData(ugrid)
+        cell_centers_filter.Update()
+        cell_centers = numpy_support.vtk_to_numpy(
+            cell_centers_filter.GetOutput().GetPoints().GetData()
+        ).astype(np.float64)
+        
+        # Build face connectivity
+        neighbors, face_point_ids_map, cell_point_ids = build_face_connectivity_vtk(ugrid)
+        
+        # Flatten data structures for efficient storage and computation
+        cell_point_ids_flat = []
+        cell_point_ids_offsets = [0]
+        for cell_pts in cell_point_ids:
+            cell_point_ids_flat.extend(cell_pts)
+            cell_point_ids_offsets.append(len(cell_point_ids_flat))
+        
+        neighbors_flat = []
+        neighbors_offsets = [0]
+        face_point_ids_flat = []
+        face_offsets = [0]
+        
+        for cell_id, cell_neighbors in enumerate(neighbors):
+            neighbors_flat.extend(cell_neighbors)
+            neighbors_offsets.append(len(neighbors_flat))
+            
+            for neighbor_id in cell_neighbors:
+                if (cell_id, neighbor_id) in face_point_ids_map:
+                    face_pts = face_point_ids_map[(cell_id, neighbor_id)]
+                    face_point_ids_flat.extend(face_pts)
+                face_offsets.append(len(face_point_ids_flat))
+        
+        # Convert to numpy arrays with appropriate dtypes
+        data.volume_points = points.astype(np.float64)
+        data.volume_cell_volumes = cell_volumes.astype(np.float64)
+        data.volume_cell_centers = cell_centers.astype(np.float64)
+        data.volume_cell_point_ids_flat = np.array(cell_point_ids_flat, dtype=np.int64)
+        data.volume_cell_point_ids_offsets = np.array(cell_point_ids_offsets, dtype=np.int64)
+        data.volume_neighbors_flat = np.array(neighbors_flat, dtype=np.int64)
+        data.volume_neighbors_offsets = np.array(neighbors_offsets, dtype=np.int64)
+        data.volume_face_point_ids_flat = np.array(face_point_ids_flat, dtype=np.int64)
+        data.volume_face_offsets = np.array(face_offsets, dtype=np.int64)
+        
+        return data
+
+
 class DoMINOZarrTransformation(DataTransformation):
     """Transforms DoMINO data for Zarr storage format."""
 
@@ -298,8 +547,14 @@ class DoMINOZarrTransformation(DataTransformation):
             )
             chunks = (chunk_rows, shape[1])
 
+        # Preserve dtype for integer arrays (connectivity), convert to float32 for others
+        if np.issubdtype(array.dtype, np.integer):
+            data = array  # Keep integer dtype as-is
+        else:
+            data = np.float32(array)  # Convert float arrays to float32
+
         return PreparedZarrArrayInfo(
-            data=np.float32(array),
+            data=data,
             chunks=chunks,
             compressor=self.compressor,
         )
@@ -314,7 +569,7 @@ class DoMINOZarrTransformation(DataTransformation):
 
         Returns:
             Dictionary with data formatted for Zarr storage, including:
-                - Data organized into groups (stl, surface, volume)
+                - Data organized into groups (stl, surface, volume, connectivity)
                 - Compression settings
                 - Chunking configurations
         """
@@ -330,4 +585,14 @@ class DoMINOZarrTransformation(DataTransformation):
             surface_fields=self._prepare_array(data.surface_fields),
             volume_mesh_centers=self._prepare_array(data.volume_mesh_centers),
             volume_fields=self._prepare_array(data.volume_fields),
+            # Connectivity data
+            volume_points=self._prepare_array(data.volume_points),
+            volume_cell_volumes=self._prepare_array(data.volume_cell_volumes),
+            volume_cell_centers=self._prepare_array(data.volume_cell_centers),
+            volume_cell_point_ids_flat=self._prepare_array(data.volume_cell_point_ids_flat),
+            volume_cell_point_ids_offsets=self._prepare_array(data.volume_cell_point_ids_offsets),
+            volume_neighbors_flat=self._prepare_array(data.volume_neighbors_flat),
+            volume_neighbors_offsets=self._prepare_array(data.volume_neighbors_offsets),
+            volume_face_point_ids_flat=self._prepare_array(data.volume_face_point_ids_flat),
+            volume_face_offsets=self._prepare_array(data.volume_face_offsets),
         )

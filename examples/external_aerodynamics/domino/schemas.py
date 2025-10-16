@@ -89,6 +89,17 @@ class DoMINOExtractedDataInMemory:
     volume_mesh_centers: Optional[np.ndarray] = None
     volume_fields: Optional[np.ndarray] = None
 
+    # Volume connectivity data (for FVM residual computation)
+    volume_points: Optional[np.ndarray] = None
+    volume_cell_volumes: Optional[np.ndarray] = None
+    volume_cell_centers: Optional[np.ndarray] = None
+    volume_cell_point_ids_flat: Optional[np.ndarray] = None
+    volume_cell_point_ids_offsets: Optional[np.ndarray] = None
+    volume_neighbors_flat: Optional[np.ndarray] = None
+    volume_neighbors_offsets: Optional[np.ndarray] = None
+    volume_face_point_ids_flat: Optional[np.ndarray] = None
+    volume_face_offsets: Optional[np.ndarray] = None
+
 
 @dataclass(frozen=True)
 class PreparedZarrArrayInfo:
@@ -130,6 +141,17 @@ class DoMINOZarrDataInMemory:
     # Volume data
     volume_mesh_centers: Optional[PreparedZarrArrayInfo] = None
     volume_fields: Optional[PreparedZarrArrayInfo] = None
+
+    # Volume connectivity data (for FVM residual computation)
+    volume_points: Optional[PreparedZarrArrayInfo] = None
+    volume_cell_volumes: Optional[PreparedZarrArrayInfo] = None
+    volume_cell_centers: Optional[PreparedZarrArrayInfo] = None
+    volume_cell_point_ids_flat: Optional[PreparedZarrArrayInfo] = None
+    volume_cell_point_ids_offsets: Optional[PreparedZarrArrayInfo] = None
+    volume_neighbors_flat: Optional[PreparedZarrArrayInfo] = None
+    volume_neighbors_offsets: Optional[PreparedZarrArrayInfo] = None
+    volume_face_point_ids_flat: Optional[PreparedZarrArrayInfo] = None
+    volume_face_offsets: Optional[PreparedZarrArrayInfo] = None
 
 
 @dataclass(frozen=True)
