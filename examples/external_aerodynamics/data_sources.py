@@ -90,11 +90,12 @@ class ExternalAerodynamicsDataSource(DataSource):
         """
         car_dir = self.input_dir / dirname
 
-        # Load STL geometry
+        # Load geometry (STL or VTP depending on dataset kind)
         stl_path = self.path_getter.geometry_path(car_dir)
         if not stl_path.exists():
-            raise FileNotFoundError(f"STL file not found: {stl_path}")
+            raise FileNotFoundError(f"Geometry file not found: {stl_path}")
 
+        # Read geometry file (supports both STL and VTP formats)
         reader = pv.get_reader(str(stl_path))
         stl_polydata = reader.read()
 
@@ -127,8 +128,8 @@ class ExternalAerodynamicsDataSource(DataSource):
         angle_of_attack = None
         
         if self.kind == DatasetKind.AIRFRANS:
-            name = dirname.removeprefix("run_")
-            parts = name.split("_")
+            # Parse metadata from directory name: airFoil2D_SST_<param1>_<param2>_<velocity>_<aoa>_...
+            parts = dirname.split("_")
             if len(parts) >= 3:
                 try:
                     stream_velocity = float(parts[2])

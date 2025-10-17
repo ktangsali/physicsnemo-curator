@@ -29,13 +29,41 @@ def default_geometry_processing_for_external_aerodynamics(
     """Default geometry processing for External Aerodynamics."""
 
     data.stl_coordinates = data.stl_polydata.points
-    data.stl_faces = (
-        np.array(data.stl_polydata.faces).reshape((-1, 4))[:, 1:].astype(np.int32)
-    ).flatten()  # Assuming triangular elements
-    data.stl_areas = data.stl_polydata.compute_cell_sizes(
-        length=False, area=True, volume=False
-    )
-    data.stl_areas = np.array(data.stl_areas.cell_data["Area"])
+    
+    # Handle both faces (3D surfaces) and lines (2D profiles)
+    if data.stl_polydata.faces is not None and len(data.stl_polydata.faces) > 0:
+        # 3D surface with triangular faces
+        data.stl_faces = (
+            np.array(data.stl_polydata.faces).reshape((-1, 4))[:, 1:].astype(np.int32)
+        ).flatten()  # Assuming triangular elements
+        # Compute areas for 3D faces
+        data.stl_areas = data.stl_polydata.compute_cell_sizes(
+            length=False, area=True, volume=False
+        )
+        data.stl_areas = np.array(data.stl_areas.cell_data["Area"])
+    elif data.stl_polydata.lines is not None and len(data.stl_polydata.lines) > 0:
+        # 2D profile with line segments - extract connectivity
+        lines = data.stl_polydata.lines
+        # Lines format: [n_pts, pt1, pt2, n_pts, pt1, pt2, ...]
+        # Extract pairs for line segments (each segment has 2 points)
+        faces_list = []
+        i = 0
+        while i < len(lines):
+            n_pts = lines[i]
+            pts = lines[i+1:i+1+n_pts]
+            faces_list.extend(pts)
+            i += 1 + n_pts
+        data.stl_faces = np.array(faces_list, dtype=np.int32)
+        # Compute line lengths for 2D lines
+        data.stl_areas = data.stl_polydata.compute_cell_sizes(
+            length=True, area=False, volume=False
+        )
+        data.stl_areas = np.array(data.stl_areas.cell_data["Length"])
+    else:
+        # No faces or lines - empty array
+        data.stl_faces = np.array([], dtype=np.int32)
+        data.stl_areas = np.array([], dtype=np.float32)
+    
     data.stl_centers = np.array(data.stl_polydata.cell_centers().points)
 
     # Update metadata

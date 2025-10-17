@@ -140,29 +140,29 @@ class AhmedMLPaths(OpenFoamDatasetPaths):
         return car_dir / f"ahmed_{index}.stl"
 
 
-class AirfoilPaths(OpenFoamDatasetPaths):
+class AirfoilPaths:
     """Utility class for handling Airfoil dataset file paths.
 
-    This class provides static methods to construct paths for different components
-    of the Airfoil dataset (geometry, volume, and surface data).
+    File naming pattern: airFoil2D_SST_*/{dirname}_aerofoil.vtp, {dirname}_internal.vtu
     """
 
     @staticmethod
     def geometry_path(car_dir: Path) -> Path:
-        """Returns geometry path."""
-
-        index = AirfoilPaths._get_index(car_dir)
-        return car_dir / f"aerofoil_{index}.stl"
+        """Returns geometry path (VTP file)."""
+        dirname = car_dir.name
+        return car_dir / f"{dirname}_aerofoil.vtp"
 
     @staticmethod
     def volume_path(car_dir: Path) -> Path:
-        index = AirfoilPaths._get_index(car_dir)
-        return car_dir / f"internal_{index}.vtu"
+        """Returns volume path."""
+        dirname = car_dir.name
+        return car_dir / f"{dirname}_internal.vtu"
 
     @staticmethod
     def surface_path(car_dir: Path) -> Path:
-        index = AirfoilPaths._get_index(car_dir)
-        return car_dir / f"aerofoil_{index}.vtp"
+        """Returns surface path."""
+        dirname = car_dir.name
+        return car_dir / f"{dirname}_aerofoil.vtp"
 
 
 def get_path_getter(kind: DatasetKind):

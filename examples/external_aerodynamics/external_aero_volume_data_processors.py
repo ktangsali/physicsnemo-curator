@@ -64,6 +64,51 @@ def update_volume_data_to_float32(
     """Update volume data to float32."""
     data.volume_mesh_centers = to_float32(data.volume_mesh_centers)
     data.volume_fields = to_float32(data.volume_fields)
+    if data.volume_sdf is not None:
+        data.volume_sdf = to_float32(data.volume_sdf)
+    return data
+
+
+def read_implicit_distance_as_sdf(
+    data: ExternalAerodynamicsExtractedDataInMemory,
+    field_name: str = "implicit_distance",
+) -> ExternalAerodynamicsExtractedDataInMemory:
+    """
+    Read pre-computed implicit distance from volume data and store as volume_sdf.
+    
+    This reads the implicit distance field that already exists in the VTU file
+    (computed during the simulation or preprocessing) and stores it as volume_sdf.
+    
+    Args:
+        data: ExternalAerodynamicsExtractedDataInMemory with volume data
+        field_name: Name of the implicit distance field in the volume data
+        
+    Returns:
+        Data with volume_sdf populated from existing field
+    """
+    if data.volume_unstructured_grid is None:
+        return data
+    
+    volume = pv.wrap(data.volume_unstructured_grid)
+    
+    # Check if field exists in point data or cell data
+    if field_name in volume.point_data:
+        sdf = np.array(volume.point_data[field_name])
+    elif field_name in volume.cell_data:
+        sdf = np.array(volume.cell_data[field_name])
+    else:
+        raise ValueError(
+            f"Field '{field_name}' not found in volume data. "
+            f"Available point data: {list(volume.point_data.keys())}. "
+            f"Available cell data: {list(volume.cell_data.keys())}"
+        )
+    
+    # Reshape to (N, 1) if needed
+    if sdf.ndim == 1:
+        sdf = sdf.reshape(-1, 1)
+    
+    data.volume_sdf = sdf.astype(np.float32)
+    
     return data
 
 

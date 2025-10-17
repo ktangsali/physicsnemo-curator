@@ -64,13 +64,6 @@ etl:
       # This will ensure that the bare minimum criteria for surface data is met.
       # That is - The surface data (mesh centers, normals, areas and fields) are present.
       surface_processors:
-        - _target_: examples.external_aerodynamics.external_aero_surface_data_processors.decimate_mesh
-          _partial_: true
-          algo: decimate_pro  # can be one of {decimate_pro, decimate}
-          reduction: 0.0  # 0 means no decimation.
-          preserve_topology: false
-        - _target_: examples.external_aerodynamics.external_aero_surface_data_processors.normalize_surface_normals
-          _partial_: true
         - _target_: examples.external_aerodynamics.external_aero_surface_data_processors.update_surface_data_to_float32
           _partial_: true
 
@@ -82,12 +75,7 @@ etl:
       # This will ensure that the bare minimum criteria for volume data is met.
       # That is - The volume data (mesh centers and fields) are present.
       volume_processors:
-        - _target_: examples.external_aerodynamics.external_aero_volume_data_processors.clip_volume_to_box
-          _partial_: true
-          bounds: [[-2, 4], [-1.5, 1.5], [0, 1]]
         - _target_: examples.external_aerodynamics.external_aero_volume_data_processors.update_volume_data_to_float32
-          _partial_: true
-        - _target_: examples.external_aerodynamics.external_aero_sdf_processors.compute_sdf
           _partial_: true
 
     write_ready_transformation: ${override_transformations.write_ready_transformation}

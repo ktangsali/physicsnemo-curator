@@ -17,4 +17,4 @@
 
 surface_variables:
   p: scalar
-  wallShearStress: vector
+  U: vector
