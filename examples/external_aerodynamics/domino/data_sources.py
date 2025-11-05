@@ -242,6 +242,9 @@ class DoMINODataSource(DataSource):
             "volume_neighbors_offsets",
             "volume_face_point_ids_flat",
             "volume_face_offsets",
+            # Face geometry fields
+            "volume_face_areas_flat",
+            "volume_face_normals_flat",
         ]:
             array_info = getattr(data, field)
             if array_info is not None:

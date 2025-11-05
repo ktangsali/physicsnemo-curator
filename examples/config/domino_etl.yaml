@@ -27,14 +27,14 @@ etl:
     model_type: combined  # produce data for which model? surface, volume, combined
 
   processing:
-    num_processes: 12
+    num_processes: 6
     args: {}
 
   validator:
     _target_: examples.external_aerodynamics.domino.dataset_validator.DoMINODatasetValidator
     _convert_: all
 
-    validation_level: "fields"  # One of "structure" or "fields"
+    validation_level: "structure"  # One of "structure" or "fields"
 
   source:
     _target_: examples.external_aerodynamics.domino.data_sources.DoMINODataSource

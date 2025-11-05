@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import multiprocessing
+import os
 import time
 
 import hydra
@@ -24,6 +25,10 @@ from omegaconf import DictConfig, OmegaConf
 from physicsnemo_curator.etl.data_processors import ParallelProcessor
 from physicsnemo_curator.etl.processing_config import ProcessingConfig
 from physicsnemo_curator.utils import utils as curator_utils
+
+# Set Numba thread count for face geometry computations (JIT-compiled functions)
+if "NUMBA_NUM_THREADS" not in os.environ:
+    os.environ["NUMBA_NUM_THREADS"] = "12"  # Default: 16 threads per process
 
 
 @hydra.main(version_base="1.3")

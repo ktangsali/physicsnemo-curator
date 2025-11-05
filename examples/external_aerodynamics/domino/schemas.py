@@ -99,6 +99,9 @@ class DoMINOExtractedDataInMemory:
     volume_neighbors_offsets: Optional[np.ndarray] = None
     volume_face_point_ids_flat: Optional[np.ndarray] = None
     volume_face_offsets: Optional[np.ndarray] = None
+    # Face geometry (computed from face_point_ids for accurate FVM residuals)
+    volume_face_areas_flat: Optional[np.ndarray] = None  # [num_faces] face areas
+    volume_face_normals_flat: Optional[np.ndarray] = None  # [num_faces, 3] outward normals
 
 
 @dataclass(frozen=True)
@@ -152,6 +155,9 @@ class DoMINOZarrDataInMemory:
     volume_neighbors_offsets: Optional[PreparedZarrArrayInfo] = None
     volume_face_point_ids_flat: Optional[PreparedZarrArrayInfo] = None
     volume_face_offsets: Optional[PreparedZarrArrayInfo] = None
+    # Face geometry (computed from face_point_ids for accurate FVM residuals)
+    volume_face_areas_flat: Optional[PreparedZarrArrayInfo] = None  # [num_faces] face areas
+    volume_face_normals_flat: Optional[PreparedZarrArrayInfo] = None  # [num_faces, 3] outward normals
 
 
 @dataclass(frozen=True)

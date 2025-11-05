@@ -27,7 +27,13 @@ from physicsnemo_curator.etl.data_transformations import DataTransformation
 from physicsnemo_curator.etl.processing_config import ProcessingConfig
 
 from .constants import PhysicsConstants
-from .domino_utils import decimate_mesh, get_volume_data, to_float32
+from .domino_utils import (
+    compute_face_area_numpy,
+    compute_face_normal_numpy,
+    decimate_mesh,
+    get_volume_data,
+    to_float32,
+)
 from .schemas import (
     DoMINOExtractedDataInMemory,
     DoMINONumpyDataInMemory,
@@ -51,12 +57,22 @@ def extract_vtk_connectivity(mesh):
     return cell_connectivity, cell_offsets, ugrid.GetNumberOfCells()
 
 
-def build_face_connectivity_vtk(ugrid):
-    """Build face connectivity using pure VTK API.
+def build_face_connectivity_vtk(ugrid, points, cell_centers):
+    """Build face connectivity and compute face geometry using pure VTK API.
+    
+    This function combines connectivity building with face geometry computation
+    to avoid duplicate iteration over millions of faces.
+    
+    Args:
+        ugrid: VTK unstructured grid
+        points: Mesh points [num_points, 3]
+        cell_centers: Cell centers [num_cells, 3]
     
     Returns:
         neighbors: List of neighbor cell IDs for each cell
         face_point_ids_map: Dict mapping (cell1_id, cell2_id) to face point IDs
+        face_areas_map: Dict mapping (cell1_id, cell2_id) to face area
+        face_normals_map: Dict mapping (cell1_id, cell2_id) to face normal [3]
         cell_point_ids: List of point IDs for each cell
     """
     n_cells = ugrid.GetNumberOfCells()
@@ -91,19 +107,38 @@ def build_face_connectivity_vtk(ugrid):
                 face_to_cells[face_tuple] = []
             face_to_cells[face_tuple].append((cell_idx, np.array(face_pts, dtype=np.int64)))
     
-    # Build neighbors from face matches
+    # Build neighbors and compute face geometry from face matches
     neighbors = [[] for _ in range(n_cells)]
     face_point_ids_map = {}
+    face_areas_map = {}
+    face_normals_map = {}
     
     for face_tuple, cell_list in face_to_cells.items():
         if len(cell_list) == 2:  # Internal face shared by 2 cells
             (cell1_id, face_pts1), (cell2_id, face_pts2) = cell_list
+            
+            # Add neighbors
             neighbors[cell1_id].append(cell2_id)
             neighbors[cell2_id].append(cell1_id)
+            
+            # Store face point IDs
             face_point_ids_map[(cell1_id, cell2_id)] = face_pts1
             face_point_ids_map[(cell2_id, cell1_id)] = face_pts1
+            
+            # Compute face geometry (shared for both directions)
+            face_area = compute_face_area_numpy(face_pts1, points)
+            
+            # Compute normals (outward from each cell - opposite directions)
+            face_normal_1 = compute_face_normal_numpy(face_pts1, points, cell_centers[cell1_id])
+            face_normal_2 = compute_face_normal_numpy(face_pts1, points, cell_centers[cell2_id])
+            
+            # Store geometry for both directions
+            face_areas_map[(cell1_id, cell2_id)] = face_area
+            face_areas_map[(cell2_id, cell1_id)] = face_area
+            face_normals_map[(cell1_id, cell2_id)] = face_normal_1
+            face_normals_map[(cell2_id, cell1_id)] = face_normal_2
     
-    return neighbors, face_point_ids_map, cell_point_ids
+    return neighbors, face_point_ids_map, face_areas_map, face_normals_map, cell_point_ids
 
 
 class DoMINONumpyTransformation(DataTransformation):
@@ -220,20 +255,28 @@ class DoMINOPreprocessingTransformation(DataTransformation):
 
         # Load volume data if needed
         if data.volume_unstructured_grid is not None:
-            # Process volume data
+            # Compute cell centers once (used by both processing and connectivity)
+            cell_centers_filter = vtk.vtkCellCenters()
+            cell_centers_filter.SetInputData(data.volume_unstructured_grid)
+            cell_centers_filter.Update()
+            cell_centers = numpy_support.vtk_to_numpy(
+                cell_centers_filter.GetOutput().GetPoints().GetData()
+            ).astype(np.float64)
+            
+            # Process volume data (pass pre-computed cell centers)
             length_scale = np.amax(np.amax(stl_vertices, 0) - np.amin(stl_vertices, 0))
-            volume_coordinates, volume_fields = self._process_volume_data(
-                data.volume_unstructured_grid, length_scale
+            volume_fields = self._process_volume_data(
+                data.volume_unstructured_grid, length_scale, cell_centers
             )
 
-            # Compute connectivity BEFORE deleting the unstructured grid
-            data = self._compute_connectivity(data)
+            # Compute connectivity BEFORE deleting the unstructured grid (pass pre-computed cell centers)
+            data = self._compute_connectivity(data, cell_centers)
 
             # Delete raw volume data to save memory
             data.volume_unstructured_grid = None
 
             # Update processed volume data
-            data.volume_mesh_centers = to_float32(volume_coordinates)
+            data.volume_mesh_centers = to_float32(cell_centers)
             data.volume_fields = to_float32(volume_fields)
 
         if data.surface_polydata is not None:
@@ -262,9 +305,14 @@ class DoMINOPreprocessingTransformation(DataTransformation):
         return data
 
     def _compute_connectivity(
-        self, data: DoMINOExtractedDataInMemory
+        self, data: DoMINOExtractedDataInMemory, cell_centers: np.ndarray
     ) -> DoMINOExtractedDataInMemory:
-        """Compute connectivity from volume mesh."""
+        """Compute connectivity from volume mesh.
+        
+        Args:
+            data: DoMINO extracted data
+            cell_centers: Pre-computed cell centers [num_cells, 3] (avoids recomputation)
+        """
         ugrid = data.volume_unstructured_grid
         
         # Extract points
@@ -286,16 +334,11 @@ class DoMINOPreprocessingTransformation(DataTransformation):
             ugrid.GetCellData().GetArray("Volume")
         ).astype(np.float64)
         
-        # Compute cell centers
-        cell_centers_filter = vtk.vtkCellCenters()
-        cell_centers_filter.SetInputData(ugrid)
-        cell_centers_filter.Update()
-        cell_centers = numpy_support.vtk_to_numpy(
-            cell_centers_filter.GetOutput().GetPoints().GetData()
-        ).astype(np.float64)
-        
-        # Build face connectivity
-        neighbors, face_point_ids_map, cell_point_ids = build_face_connectivity_vtk(ugrid)
+        # Build face connectivity and compute face geometry in one pass
+        # Use pre-computed cell_centers (passed as argument to avoid redundant computation)
+        neighbors, face_point_ids_map, face_areas_map, face_normals_map, cell_point_ids = build_face_connectivity_vtk(
+            ugrid, points, cell_centers
+        )
         
         # Flatten data structures
         cell_point_ids_flat = []
@@ -309,6 +352,10 @@ class DoMINOPreprocessingTransformation(DataTransformation):
         face_point_ids_flat = []
         face_offsets = [0]
         
+        # Lists for face geometry
+        face_areas_flat = []
+        face_normals_flat = []
+        
         for cell_id, cell_neighbors in enumerate(neighbors):
             neighbors_flat.extend(cell_neighbors)
             neighbors_offsets.append(len(neighbors_flat))
@@ -317,6 +364,11 @@ class DoMINOPreprocessingTransformation(DataTransformation):
                 if (cell_id, neighbor_id) in face_point_ids_map:
                     face_pts = face_point_ids_map[(cell_id, neighbor_id)]
                     face_point_ids_flat.extend(face_pts)
+                    
+                    # Retrieve pre-computed face geometry
+                    face_areas_flat.append(face_areas_map[(cell_id, neighbor_id)])
+                    face_normals_flat.append(face_normals_map[(cell_id, neighbor_id)])
+                    
                 face_offsets.append(len(face_point_ids_flat))
         
         # Store connectivity
@@ -330,15 +382,28 @@ class DoMINOPreprocessingTransformation(DataTransformation):
         data.volume_face_point_ids_flat = np.array(face_point_ids_flat, dtype=np.int64)
         data.volume_face_offsets = np.array(face_offsets, dtype=np.int64)
         
+        # Store face geometry
+        data.volume_face_areas_flat = np.array(face_areas_flat, dtype=np.float64)
+        data.volume_face_normals_flat = np.array(face_normals_flat, dtype=np.float64)  # Shape: [num_faces, 3]
+        
         return data
 
     def _process_volume_data(
-        self, unstructured_grid: vtk.vtkUnstructuredGrid, length_scale: float
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Process volume mesh data."""
+        self, unstructured_grid: vtk.vtkUnstructuredGrid, length_scale: float, cell_centers: np.ndarray
+    ) -> np.ndarray:
+        """Process volume mesh data.
+        
+        Args:
+            unstructured_grid: VTK unstructured grid
+            length_scale: Characteristic length scale for non-dimensionalization
+            cell_centers: Pre-computed cell centers [num_cells, 3] (avoids recomputation)
+        
+        Returns:
+            volume_fields: Non-dimensionalized field values at cell centers
+        """
 
-        volume_coordinates, volume_fields = get_volume_data(
-            unstructured_grid, self.volume_variables
+        volume_fields = get_volume_data(
+            unstructured_grid, self.volume_variables, cell_centers
         )
         volume_fields = np.concatenate(volume_fields, axis=-1)
 
@@ -351,7 +416,7 @@ class DoMINOPreprocessingTransformation(DataTransformation):
             self.constants.STREAM_VELOCITY * length_scale
         )
 
-        return volume_coordinates, volume_fields
+        return volume_fields
 
     def _process_surface_data(
         self,
@@ -456,8 +521,10 @@ class DoMINOConnectivityTransformation(DataTransformation):
             cell_centers_filter.GetOutput().GetPoints().GetData()
         ).astype(np.float64)
         
-        # Build face connectivity
-        neighbors, face_point_ids_map, cell_point_ids = build_face_connectivity_vtk(ugrid)
+        # Build face connectivity and compute face geometry in one pass
+        neighbors, face_point_ids_map, face_areas_map, face_normals_map, cell_point_ids = build_face_connectivity_vtk(
+            ugrid, points, cell_centers
+        )
         
         # Flatten data structures for efficient storage and computation
         cell_point_ids_flat = []
@@ -471,6 +538,10 @@ class DoMINOConnectivityTransformation(DataTransformation):
         face_point_ids_flat = []
         face_offsets = [0]
         
+        # Lists for face geometry
+        face_areas_flat = []
+        face_normals_flat = []
+        
         for cell_id, cell_neighbors in enumerate(neighbors):
             neighbors_flat.extend(cell_neighbors)
             neighbors_offsets.append(len(neighbors_flat))
@@ -479,6 +550,11 @@ class DoMINOConnectivityTransformation(DataTransformation):
                 if (cell_id, neighbor_id) in face_point_ids_map:
                     face_pts = face_point_ids_map[(cell_id, neighbor_id)]
                     face_point_ids_flat.extend(face_pts)
+                    
+                    # Retrieve pre-computed face geometry
+                    face_areas_flat.append(face_areas_map[(cell_id, neighbor_id)])
+                    face_normals_flat.append(face_normals_map[(cell_id, neighbor_id)])
+                    
                 face_offsets.append(len(face_point_ids_flat))
         
         # Convert to numpy arrays with appropriate dtypes
@@ -491,6 +567,10 @@ class DoMINOConnectivityTransformation(DataTransformation):
         data.volume_neighbors_offsets = np.array(neighbors_offsets, dtype=np.int64)
         data.volume_face_point_ids_flat = np.array(face_point_ids_flat, dtype=np.int64)
         data.volume_face_offsets = np.array(face_offsets, dtype=np.int64)
+        
+        # Store face geometry
+        data.volume_face_areas_flat = np.array(face_areas_flat, dtype=np.float64)
+        data.volume_face_normals_flat = np.array(face_normals_flat, dtype=np.float64)  # Shape: [num_faces, 3]
         
         return data
 
@@ -595,4 +675,7 @@ class DoMINOZarrTransformation(DataTransformation):
             volume_neighbors_offsets=self._prepare_array(data.volume_neighbors_offsets),
             volume_face_point_ids_flat=self._prepare_array(data.volume_face_point_ids_flat),
             volume_face_offsets=self._prepare_array(data.volume_face_offsets),
+            # Face geometry
+            volume_face_areas_flat=self._prepare_array(data.volume_face_areas_flat),
+            volume_face_normals_flat=self._prepare_array(data.volume_face_normals_flat),
         )
