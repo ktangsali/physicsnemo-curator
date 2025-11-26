@@ -118,6 +118,34 @@ def get_volume_data(unstructured_grid, variables, cell_centers=None):
     return fields
 
 
+def get_volume_point_data(unstructured_grid, variables):
+    """
+    Extract volume data with point data (field values at nodes/vertices).
+    
+    Args:
+        unstructured_grid: VTK unstructured grid
+        variables: List of field variable names to extract
+    
+    Returns:
+        fields: List of field arrays at nodes/vertices (None if not available)
+    """
+    point_data = unstructured_grid.GetPointData()
+    
+    fields = []
+    for var_name in variables:
+        if point_data.HasArray(var_name):
+            array = point_data.GetArray(var_name)
+            array_data = numpy_support.vtk_to_numpy(array).reshape(
+                array.GetNumberOfTuples(), array.GetNumberOfComponents()
+            )
+            fields.append(array_data)
+        else:
+            # Variable not in point data, return None for this variable
+            fields.append(None)
+    
+    return fields
+
+
 @njit(fastmath=True)
 def compute_face_area_numpy(point_ids: np.ndarray, points: np.ndarray) -> float:
     """

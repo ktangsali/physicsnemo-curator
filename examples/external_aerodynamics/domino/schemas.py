@@ -87,7 +87,8 @@ class DoMINOExtractedDataInMemory:
 
     # Processed volume data
     volume_mesh_centers: Optional[np.ndarray] = None
-    volume_fields: Optional[np.ndarray] = None
+    volume_fields: Optional[np.ndarray] = None  # Cell data (at cell centers)
+    volume_fields_point_data: Optional[np.ndarray] = None  # Point data (at nodes)
 
     # Volume connectivity data (for FVM residual computation)
     volume_points: Optional[np.ndarray] = None
@@ -143,7 +144,8 @@ class DoMINOZarrDataInMemory:
 
     # Volume data
     volume_mesh_centers: Optional[PreparedZarrArrayInfo] = None
-    volume_fields: Optional[PreparedZarrArrayInfo] = None
+    volume_fields: Optional[PreparedZarrArrayInfo] = None  # Cell data (at cell centers)
+    volume_fields_point_data: Optional[PreparedZarrArrayInfo] = None  # Point data (at nodes)
 
     # Volume connectivity data (for FVM residual computation)
     volume_points: Optional[PreparedZarrArrayInfo] = None
@@ -198,4 +200,4 @@ class DoMINONumpyDataInMemory:
 
     # Volume data
     volume_mesh_centers: Optional[np.ndarray] = None
-    volume_fields: Optional[np.ndarray] = None
+    volume_fields: Optional[np.ndarray] = None  # Legacy: combined fields

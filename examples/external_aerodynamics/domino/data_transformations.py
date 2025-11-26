@@ -32,6 +32,7 @@ from .domino_utils import (
     compute_face_normal_numpy,
     decimate_mesh,
     get_volume_data,
+    get_volume_point_data,
     to_float32,
 )
 from .schemas import (
@@ -265,7 +266,7 @@ class DoMINOPreprocessingTransformation(DataTransformation):
             
             # Process volume data (pass pre-computed cell centers)
             length_scale = np.amax(np.amax(stl_vertices, 0) - np.amin(stl_vertices, 0))
-            volume_fields = self._process_volume_data(
+            volume_fields_cell, volume_fields_point = self._process_volume_data(
                 data.volume_unstructured_grid, length_scale, cell_centers
             )
 
@@ -277,7 +278,8 @@ class DoMINOPreprocessingTransformation(DataTransformation):
 
             # Update processed volume data
             data.volume_mesh_centers = to_float32(cell_centers)
-            data.volume_fields = to_float32(volume_fields)
+            data.volume_fields = to_float32(volume_fields_cell)  # Existing: cell data
+            data.volume_fields_point_data = to_float32(volume_fields_point)  # New: point data
 
         if data.surface_polydata is not None:
 
@@ -390,8 +392,8 @@ class DoMINOPreprocessingTransformation(DataTransformation):
 
     def _process_volume_data(
         self, unstructured_grid: vtk.vtkUnstructuredGrid, length_scale: float, cell_centers: np.ndarray
-    ) -> np.ndarray:
-        """Process volume mesh data.
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Process volume mesh data, extracting cell data and point data.
         
         Args:
             unstructured_grid: VTK unstructured grid
@@ -399,24 +401,43 @@ class DoMINOPreprocessingTransformation(DataTransformation):
             cell_centers: Pre-computed cell centers [num_cells, 3] (avoids recomputation)
         
         Returns:
-            volume_fields: Non-dimensionalized field values at cell centers
+            volume_fields_cell: Non-dimensionalized field values at cell centers
+            volume_fields_point: Non-dimensionalized field values at nodes/vertices (or None)
         """
 
-        volume_fields = get_volume_data(
-            unstructured_grid, self.volume_variables, cell_centers
-        )
-        volume_fields = np.concatenate(volume_fields, axis=-1)
-
-        # Non-dimensionalize volume fields
-        volume_fields[:, :3] = volume_fields[:, :3] / self.constants.STREAM_VELOCITY
-        volume_fields[:, 3:4] = volume_fields[:, 3:4] / (
+        # Extract cell data (existing behavior)
+        cell_fields = get_volume_data(unstructured_grid, self.volume_variables, cell_centers)
+        volume_fields_cell = np.concatenate(cell_fields, axis=-1)
+        
+        # Non-dimensionalize cell fields
+        volume_fields_cell[:, :3] = volume_fields_cell[:, :3] / self.constants.STREAM_VELOCITY
+        volume_fields_cell[:, 3:4] = volume_fields_cell[:, 3:4] / (
             self.constants.AIR_DENSITY * self.constants.STREAM_VELOCITY**2.0
         )
-        volume_fields[:, 4:] = volume_fields[:, 4:] / (
+        volume_fields_cell[:, 4:] = volume_fields_cell[:, 4:] / (
             self.constants.STREAM_VELOCITY * length_scale
         )
+        
+        # Extract point data (new addition)
+        point_fields = get_volume_point_data(unstructured_grid, self.volume_variables)
+        volume_fields_point = None
+        
+        # Only process if we have point data available
+        if any(f is not None for f in point_fields):
+            valid_point_fields = [f for f in point_fields if f is not None]
+            if valid_point_fields:
+                volume_fields_point = np.concatenate(valid_point_fields, axis=-1)
+                
+                # Non-dimensionalize point fields
+                volume_fields_point[:, :3] = volume_fields_point[:, :3] / self.constants.STREAM_VELOCITY
+                volume_fields_point[:, 3:4] = volume_fields_point[:, 3:4] / (
+                    self.constants.AIR_DENSITY * self.constants.STREAM_VELOCITY**2.0
+                )
+                volume_fields_point[:, 4:] = volume_fields_point[:, 4:] / (
+                    self.constants.STREAM_VELOCITY * length_scale
+                )
 
-        return volume_fields
+        return volume_fields_cell, volume_fields_point
 
     def _process_surface_data(
         self,
@@ -665,6 +686,7 @@ class DoMINOZarrTransformation(DataTransformation):
             surface_fields=self._prepare_array(data.surface_fields),
             volume_mesh_centers=self._prepare_array(data.volume_mesh_centers),
             volume_fields=self._prepare_array(data.volume_fields),
+            volume_fields_point_data=self._prepare_array(data.volume_fields_point_data),
             # Connectivity data
             volume_points=self._prepare_array(data.volume_points),
             volume_cell_volumes=self._prepare_array(data.volume_cell_volumes),

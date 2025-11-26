@@ -232,6 +232,7 @@ class DoMINODataSource(DataSource):
             "surface_fields",
             "volume_mesh_centers",
             "volume_fields",
+            "volume_fields_point_data",
             # Connectivity fields
             "volume_points",
             "volume_cell_volumes",
