@@ -72,10 +72,14 @@ def get_vertices(polydata):
 
 
 def get_volume_data(polydata, variables):
-    """Function to get volume data"""
-    vertices = get_vertices(polydata)
-    point_data = polydata.GetPointData()
+    """Function to get volume data at cell centers"""
+    cell_centers_filter = vtk.vtkCellCenters()
+    cell_centers_filter.SetInputData(polydata)
+    cell_centers_filter.Update()
+    cell_centers_output = cell_centers_filter.GetOutput()
+    vertices = numpy_support.vtk_to_numpy(cell_centers_output.GetPoints().GetData())
 
-    fields = get_fields(point_data, variables)
+    cell_data = polydata.GetCellData()
+    fields = get_fields(cell_data, variables)
 
     return vertices, fields

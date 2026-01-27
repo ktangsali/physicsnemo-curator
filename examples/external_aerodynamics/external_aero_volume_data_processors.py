@@ -138,12 +138,19 @@ def non_dimensionalize_volume_fields(
 
     stl_vertices = data.stl_polydata.points
     length_scale = np.amax(np.amax(stl_vertices, 0) - np.amin(stl_vertices, 0))
+    # Velocity
     data.volume_fields[:, :3] = data.volume_fields[:, :3] / stream_velocity
+    # Pressure
     data.volume_fields[:, 3:4] = data.volume_fields[:, 3:4] / (
         air_density * stream_velocity**2.0
     )
+    # Turbulent Viscosity
     data.volume_fields[:, 4:] = data.volume_fields[:, 4:] / (
         stream_velocity * length_scale
+    )
+    # Turbulent Kinetic Energy
+    data.volume_fields[:, 5:] = data.volume_fields[:, 5:] / (
+        stream_velocity**2
     )
 
     return data
